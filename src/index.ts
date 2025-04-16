@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 const Command = require("commander").Command;
 const read = require("read").read;
 const CryptoJS = require("crypto-js");
