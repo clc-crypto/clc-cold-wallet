@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-"use strict";
+
 const Command = require("commander").Command;
 const read = require("read").read;
 const CryptoJS = require("crypto-js");
@@ -7,222 +7,296 @@ const EC = require("elliptic").ec;
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+
 const ec = new EC("secp256k1");
+
 const getpass = async (prompt) => {
-    return await read({ prompt: prompt, silent: true });
+    return await read({ prompt, silent: true });
 };
+
 const input = async (prompt) => {
-    return await read({ prompt: prompt });
+    return await read({ prompt });
 };
+
 function sha256(message) {
     return CryptoJS.SHA256(message).toString(CryptoJS.enc.Hex);
 }
+
 const program = new Command();
 const savePath = path.join(os.homedir(), ".clc-cold-ses");
+
 program
-    .name('clc-cold-wallet')
-    .description('A CLI tool made to store CLCs locally')
-    .version('1.0.0');
+    .name("clc-cold-wallet")
+    .description("Command-line tool for managing local CLC wallets securely")
+    .version("1.0.0");
+
 program
-    .command('decrypt <path>')
-    .description('Decrypt a .wallet file and load it to do operations on')
-    .option("-p, --print")
-    .action(async (path, options) => {
-    if (fs.existsSync(savePath))
-        return console.log("Wallet already loaded, please logout");
-    const passwd = await getpass("Enter wallet encryption password >");
-    const decryptedWallet = CryptoJS.AES.decrypt(fs.readFileSync(path, "utf-8"), passwd).toString(CryptoJS.enc.Utf8);
-    if (!decryptedWallet.startsWith("{")) {
-        console.log("\nInvalid password!");
-        return;
-    }
-    console.log(`\nWallet contains ${Object.keys(JSON.parse(decryptedWallet)).length} coins.`);
-    if (options.print)
-        console.log(JSON.parse(decryptedWallet));
-    fs.writeFileSync(savePath, decryptedWallet);
-});
-program
-    .command('logout <path>')
-    .description('Decrypt a .wallet file and load it to do operations on')
-    .action(async (path) => {
-    if (!fs.existsSync(savePath))
-        return console.log("Wallet not loaded yet, please decrypt");
-    const passwd = await getpass("Enter wallet encryption password >");
-    console.log();
-    const passwdChk = await getpass("Retype wallet encryption password >");
-    if (passwd !== passwdChk)
-        return console.log("\nPasswords don't match!");
-    const wallet = fs.readFileSync(savePath, "utf-8");
-    fs.writeFileSync(path, CryptoJS.AES.encrypt(wallet, passwd).toString());
-    fs.unlinkSync(savePath);
-    console.log("\nSuccessfully saved and encrypted wallet to " + path + "!");
-});
-program
-    .command('ballance')
-    .description('Get the ballance of your wallet')
-    .action(async () => {
-    if (!fs.existsSync(savePath))
-        return console.log("Wallet not loaded yet, please decrypt");
-    let bal = 0;
-    for (const coinId of Object.keys(JSON.parse(fs.readFileSync(savePath, "utf-8")))) {
-        bal += (await (await fetch("https://clc.ix.tc/coin/" + coinId)).json()).coin.val;
-    }
-    console.log("Total wallet ballance " + Math.round(bal * 1000) / 1000 + "CLC");
-});
-program
-    .command('coins')
-    .description('Get all coins and public keys in your wallet')
-    .option("-v, --validate")
-    .option("--val")
-    .action(async (options) => {
-    if (!fs.existsSync(savePath))
-        return console.log("Wallet not loaded yet, please decrypt");
-    const wallet = JSON.parse(fs.readFileSync(savePath, "utf-8"));
-    console.log("Wallet contains " + Object.keys(wallet).length + " coins,");
-    for (const coinId in wallet) {
-        let coin = options.val ? (await (await fetch("https://clc.ix.tc/coin/" + coinId)).json()).coin : null;
-        const pub = ec.keyFromPrivate(wallet[coinId]).getPublic().encode("hex", false);
-        console.log("#" + coinId + ", " + pub + (coin ? `, ${coin.val}CLC` : ""));
-        if (options.validate) {
-            if (!coin)
-                coin = (await (await fetch("https://clc.ix.tc/coin/" + coinId)).json()).coin;
-            const transactions = coin.transactions;
-            if (transactions[transactions.length - 1].holder === pub)
-                console.log("Valid.");
-            else
-                console.log("Invalid!");
+    .command("decrypt <path>")
+    .description("Decrypt a wallet file and load it into the session")
+    .option("-p, --print", "Print wallet contents after decryption")
+    .action(async (walletPath, options) => {
+        if (fs.existsSync(savePath)) {
+            console.log("A wallet is already loaded. Please logout first.");
+            return;
         }
-    }
-});
+
+        const passwd = await getpass("Enter wallet encryption password: ");
+        const decrypted = CryptoJS.AES.decrypt(fs.readFileSync(walletPath, "utf-8"), passwd).toString(CryptoJS.enc.Utf8);
+
+        if (!decrypted.startsWith("{")) {
+            console.log("Invalid password.");
+            return;
+        }
+
+        const wallet = JSON.parse(decrypted);
+        console.log(`Wallet loaded. Total coins: ${Object.keys(wallet).length}.`);
+        if (options.print) console.log(wallet);
+        fs.writeFileSync(savePath, decrypted);
+    });
+
 program
-    .command('delete <id>')
-    .description('Permanently delete a coin from your wallet')
-    .option("-c, --confirm")
-    .action(async (id, options) => {
-    if (!fs.existsSync(savePath))
-        return console.log("Wallet not loaded yet, please decrypt");
-    const wallet = JSON.parse(fs.readFileSync(savePath, "utf-8"));
-    if (!wallet[id])
-        return console.log("You do not have this coin in this wallet!");
-    if (!options.confirm) {
-        if (parseInt(await input("Please retype the coin id you want to delete >")) !== parseInt(id))
-            return console.log("Aborting!");
-        console.log("Confirmed.");
-    }
-    delete wallet[id];
-    fs.writeFileSync(savePath, JSON.stringify(wallet));
-    console.log("Done.");
-});
+    .command("logout <path>")
+    .description("Save the current wallet session and encrypt it")
+    .action(async (walletPath) => {
+        if (!fs.existsSync(savePath)) {
+            console.log("No wallet session found. Please decrypt first.");
+            return;
+        }
+
+        const passwd = await getpass("Enter wallet encryption password: ");
+        const confirm = await getpass("Confirm password: ");
+        if (passwd !== confirm) {
+            console.log("Passwords do not match.");
+            return;
+        }
+
+        const wallet = fs.readFileSync(savePath, "utf-8");
+        fs.writeFileSync(walletPath, CryptoJS.AES.encrypt(wallet, passwd).toString());
+        fs.unlinkSync(savePath);
+        console.log(`Wallet successfully saved and encrypted to ${walletPath}.`);
+    });
+
 program
-    .command("add <cpath>")
-    .description("Add a .coin file to your wallet")
-    .option("-v, --validate")
-    .action(async (cpath, options) => {
-    if (!fs.existsSync(savePath))
-        return console.log("Wallet not loaded yet, please decrypt");
-    const coinId = parseInt(path.basename(cpath).split(".")[0]);
-    if (options.validate) {
-        const pub = ec.keyFromPrivate(fs.readFileSync(cpath, "utf-8")).getPublic().encode("hex", false);
-        const transactions = (await (await fetch("https://clc.ix.tc/coin/" + coinId)).json()).coin.transactions;
-        if (transactions[transactions.length - 1].holder === pub)
-            console.log("Valid coin, adding...");
-        else
-            return console.log("Invalid coin!");
-    }
-    const wallet = JSON.parse(fs.readFileSync(savePath, "utf-8"));
-    if (wallet[coinId])
-        return console.log("Coin already in wallet!");
-    wallet[coinId] = fs.readFileSync(cpath, "utf-8");
-    fs.writeFileSync(savePath, JSON.stringify(wallet));
-    console.log("Done.");
-});
+    .command("balance")
+    .description("Check the total balance of the loaded wallet")
+    .action(async () => {
+        if (!fs.existsSync(savePath)) {
+            console.log("No wallet session found. Please decrypt first.");
+            return;
+        }
+
+        let balance = 0;
+        for (const id of Object.keys(JSON.parse(fs.readFileSync(savePath, "utf-8")))) {
+            balance += (await (await fetch("https://clc.ix.tc/coin/" + id)).json()).coin.val;
+        }
+
+        console.log(`Total wallet balance: ${Math.round(balance * 1000) / 1000} CLC.`);
+    });
+
 program
-    .command("private <id>")
-    .description("Get secret of coin <id>")
-    .action(async (id) => {
-    if (!fs.existsSync(savePath))
-        return console.log("Wallet not loaded yet, please decrypt");
-    const wallet = JSON.parse(fs.readFileSync(savePath, "utf-8"));
-    if (!wallet[id])
-        return console.log("Coin not in wallet!");
-    console.log(wallet[id]);
-});
-program
-    .command("keys")
-    .description("Generate a pair of public and private keys")
-    .option("-p, --private <string>")
+    .command("coins")
+    .description("List all coins and associated public keys")
+    .option("-v, --validate", "Validate ownership of each coin")
+    .option("--val", "Display current value of each coin")
     .action(async (options) => {
-    let kp = null;
-    if (!options.private)
-        kp = ec.genKeyPair();
-    else
-        kp = ec.keyFromPrivate(options.private);
-    console.log("Private: " + kp.getPrivate().toString("hex"));
-    console.log("Public: " + kp.getPublic().encode("hex", false));
-});
+        if (!fs.existsSync(savePath)) {
+            console.log("No wallet session found. Please decrypt first.");
+            return;
+        }
+
+        const wallet = JSON.parse(fs.readFileSync(savePath, "utf-8"));
+        console.log(`Wallet contains ${Object.keys(wallet).length} coins.`);
+
+        for (const id in wallet) {
+            let coin = options.val ? (await (await fetch(`https://clc.ix.tc/coin/${id}`)).json()).coin : null;
+            const pub = ec.keyFromPrivate(wallet[id]).getPublic().encode("hex", false);
+
+            let output = `Coin #${id}, Public Key: ${pub}`;
+            if (coin) output += `, Value: ${coin.val} CLC`;
+            console.log(output);
+
+            if (options.validate) {
+                if (!coin) coin = (await (await fetch(`https://clc.ix.tc/coin/${id}`)).json()).coin;
+                const isValid = coin.transactions[coin.transactions.length - 1].holder === pub;
+                console.log(isValid ? "Valid coin." : "Invalid ownership.");
+            }
+        }
+    });
+
 program
-    .command("transact <id> <addr>")
-    .description("Transact coin <id> to address <addr>")
-    .action(async (id, addr) => {
-    if (!fs.existsSync(savePath))
-        return console.log("Wallet not loaded yet, please decrypt");
-    const wallet = JSON.parse(fs.readFileSync(savePath, "utf-8"));
-    if (!wallet[id])
-        return console.log("This coin is not in your wallet");
-    const key = ec.keyFromPrivate(wallet[id]);
-    const sign = key.sign(sha256(addr)).toDER("hex");
-    console.log("Generated signature for transaction to " + addr + ",\n" + sign + ", transacting...");
-    const res = await (await fetch("https://clc.ix.tc/transaction?cid=" + id + "&newholder=" + addr + "&sign=" + sign)).json();
-    if (res.error)
-        console.log("Error transacting, " + res.error);
-    else {
+    .command("delete <id>")
+    .description("Delete a specific coin from the wallet")
+    .option("-c, --confirm", "Skip confirmation prompt")
+    .action(async (id, options) => {
+        if (!fs.existsSync(savePath)) {
+            console.log("No wallet session found. Please decrypt first.");
+            return;
+        }
+
+        const wallet = JSON.parse(fs.readFileSync(savePath, "utf-8"));
+        if (!wallet[id]) {
+            console.log("Coin not found in wallet.");
+            return;
+        }
+
+        if (!options.confirm) {
+            const confirmation = await input("Retype the coin ID to confirm deletion: ");
+            if (parseInt(confirmation) !== parseInt(id)) {
+                console.log("Deletion aborted.");
+                return;
+            }
+        }
+
         delete wallet[id];
         fs.writeFileSync(savePath, JSON.stringify(wallet));
-        console.log("Done, deleted from wallet!");
-    }
-});
+        console.log("Coin deleted successfully.");
+    });
+
+program
+    .command("add <cpath>")
+    .description("Add a new coin file to the wallet")
+    .option("-v, --validate", "Validate coin ownership before adding")
+    .action(async (cpath, options) => {
+        if (!fs.existsSync(savePath)) {
+            console.log("No wallet session found. Please decrypt first.");
+            return;
+        }
+
+        const coinId = parseInt(path.basename(cpath).split(".")[0]);
+        const coinSecret = fs.readFileSync(cpath, "utf-8");
+
+        if (options.validate) {
+            const pub = ec.keyFromPrivate(coinSecret).getPublic().encode("hex", false);
+            const transactions = (await (await fetch(`https://clc.ix.tc/coin/${coinId}`)).json()).coin.transactions;
+            if (transactions[transactions.length - 1].holder !== pub) {
+                console.log("Invalid coin. Ownership validation failed.");
+                return;
+            }
+            console.log("Ownership validated. Adding coin...");
+        }
+
+        const wallet = JSON.parse(fs.readFileSync(savePath, "utf-8"));
+        if (wallet[coinId]) {
+            console.log("Coin already exists in wallet.");
+            return;
+        }
+
+        wallet[coinId] = coinSecret;
+        fs.writeFileSync(savePath, JSON.stringify(wallet));
+        console.log("Coin added successfully.");
+    });
+
+program
+    .command("private <id>")
+    .description("Display the private key for a given coin ID")
+    .action(async (id) => {
+        if (!fs.existsSync(savePath)) {
+            console.log("No wallet session found. Please decrypt first.");
+            return;
+        }
+
+        const wallet = JSON.parse(fs.readFileSync(savePath, "utf-8"));
+        if (!wallet[id]) {
+            console.log("Coin not found in wallet.");
+            return;
+        }
+
+        console.log(`Private key for coin #${id}: ${wallet[id]}`);
+    });
+
+program
+    .command("keys")
+    .description("Generate a new key pair or derive from an existing private key")
+    .option("-p, --private <string>", "Use existing private key")
+    .action((options) => {
+        const kp = options.private ? ec.keyFromPrivate(options.private) : ec.genKeyPair();
+        console.log("Private Key: " + kp.getPrivate().toString("hex"));
+        console.log("Public Key: " + kp.getPublic().encode("hex", false));
+    });
+
+program
+    .command("transact <id> <addr>")
+    .description("Send coin <id> to public address <addr>")
+    .action(async (id, addr) => {
+        if (!fs.existsSync(savePath)) {
+            console.log("No wallet session found. Please decrypt first.");
+            return;
+        }
+
+        const wallet = JSON.parse(fs.readFileSync(savePath, "utf-8"));
+        if (!wallet[id]) {
+            console.log("Coin not found in wallet.");
+            return;
+        }
+
+        const key = ec.keyFromPrivate(wallet[id]);
+        const sign = key.sign(sha256(addr)).toDER("hex");
+
+        console.log("Submitting transaction...");
+        const res = await (await fetch(`https://clc.ix.tc/transaction?cid=${id}&newholder=${addr}&sign=${sign}`)).json();
+        if (res.error) {
+            console.log("Transaction failed: " + res.error);
+        } else {
+            delete wallet[id];
+            fs.writeFileSync(savePath, JSON.stringify(wallet));
+            console.log("Transaction successful. Coin removed from wallet.");
+        }
+    });
+
 program
     .command("merge <id> <target> <vol>")
-    .description("Mergo <vol> of coin <id> CLCs into coin <target>")
+    .description("Merge <vol> CLC from coin <id> into coin <target>")
     .action(async (id, target, vol) => {
-    if (!fs.existsSync(savePath))
-        return console.log("Wallet not loaded yet, please decrypt");
-    const wallet = JSON.parse(fs.readFileSync(savePath, "utf-8"));
-    if (!wallet[id])
-        return console.log("This coin is not in your wallet");
-    console.log("Fetching data...");
-    const targetCoin = (await (await fetch("https://clc.ix.tc/coin/" + target)).json()).coin;
-    const key = ec.keyFromPrivate(wallet[id]);
-    const sign = key.sign(sha256(`${target} ${targetCoin.transactions.length} ${vol}`)).toDER("hex");
-    console.log("Merging...");
-    const res = await (await fetch(`https://clc.ix.tc/merge?origin=${id}&sign=${sign}&target=${target}&vol=${vol}`)).json();
-    if (res.error)
-        console.log("Error merging coin, " + res.error);
-    else
-        console.log("Done!");
-});
+        if (!fs.existsSync(savePath)) {
+            console.log("No wallet session found. Please decrypt first.");
+            return;
+        }
+
+        const wallet = JSON.parse(fs.readFileSync(savePath, "utf-8"));
+        if (!wallet[id]) {
+            console.log("Source coin not found in wallet.");
+            return;
+        }
+
+        const targetCoin = (await (await fetch(`https://clc.ix.tc/coin/${target}`)).json()).coin;
+        const key = ec.keyFromPrivate(wallet[id]);
+        const sign = key.sign(sha256(`${target} ${targetCoin.transactions.length} ${vol}`)).toDER("hex");
+
+        const res = await (await fetch(`https://clc.ix.tc/merge?origin=${id}&sign=${sign}&target=${target}&vol=${vol}`)).json();
+        if (res.error) {
+            console.log("Merge failed: " + res.error);
+        } else {
+            console.log("Merge successful.");
+        }
+    });
+
 program
     .command("split <id> <vol>")
-    .description("Spli off <vol> CLCs from coin <id>")
+    .description("Split <vol> CLC from coin <id> into a new coin")
     .action(async (id, vol) => {
-    if (!fs.existsSync(savePath))
-        return console.log("Wallet not loaded yet, please decrypt");
-    const wallet = JSON.parse(fs.readFileSync(savePath, "utf-8"));
-    if (!wallet[id])
-        return console.log("This coin is not in your wallet");
-    console.log("Fetching data...");
-    const ll = (await (await fetch("https://clc.ix.tc/ledger-length")).json()).length + 1;
-    const key = ec.keyFromPrivate(wallet[id]);
-    const sign = key.sign(sha256(`${ll} 1 ${vol}`)).toDER("hex");
-    console.log("Splitting...");
-    const res = await (await fetch(`https://clc.ix.tc/split?origin=${id}&sign=${sign}&target=${ll}&vol=${vol}`)).json();
-    if (res.error)
-        console.log("Error splitting coin, " + res.error);
-    else {
-        wallet[ll] = wallet[id];
-        fs.writeFileSync(savePath, JSON.stringify(wallet));
-        console.log("New id, #" + ll);
-        console.log("Done!");
-    }
-});
+        if (!fs.existsSync(savePath)) {
+            console.log("No wallet session found. Please decrypt first.");
+            return;
+        }
+
+        const wallet = JSON.parse(fs.readFileSync(savePath, "utf-8"));
+        if (!wallet[id]) {
+            console.log("Source coin not found in wallet.");
+            return;
+        }
+
+        const newId = (await (await fetch("https://clc.ix.tc/ledger-length")).json()).length + 1;
+        const key = ec.keyFromPrivate(wallet[id]);
+        const sign = key.sign(sha256(`${newId} 1 ${vol}`)).toDER("hex");
+
+        const res = await (await fetch(`https://clc.ix.tc/split?origin=${id}&sign=${sign}&target=${newId}&vol=${vol}`)).json();
+        if (res.error) {
+            console.log("Split failed: " + res.error);
+        } else {
+            wallet[newId] = wallet[id];
+            fs.writeFileSync(savePath, JSON.stringify(wallet));
+            console.log(`Split successful. New coin ID: ${newId}.`);
+        }
+    });
+
 program.parse(process.argv);
