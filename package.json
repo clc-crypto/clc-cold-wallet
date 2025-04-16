@@ -16,6 +16,6 @@
     "typescript": "^5.8.3"
   },
   "bin": {
-    "cclc": "bin/index.js"
+    "cclc": "src/index.js"
   }
 }
