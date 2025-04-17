@@ -31,6 +31,17 @@ program
     .version("1.0.0");
 
 program
+    .command("empty")
+    .description("Create an empty cold CLC wallet.")
+    .action(async () => {
+        if (fs.existsSync(savePath)) {
+            console.log("A wallet is already loaded. Please logout first.");
+            return;
+        }
+        fs.writeFileSync(savePath, "{}");
+    });
+
+program
     .command("decrypt <path>")
     .description("Decrypt a wallet file and load it into the session")
     .option("-p, --print", "Print wallet contents after decryption")
